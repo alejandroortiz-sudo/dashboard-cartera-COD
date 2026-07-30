@@ -84,8 +84,8 @@ st.markdown(
     "<h2 style='margin-top: -25px; margin-bottom: 5px; padding-top: 0px; text-align: center; font-size: 26px;'>📊 Dashboard Integral de Gestión de Cartera COD</h2>",
     unsafe_allow_html=True)
 
-# EDUCACIÓN: Leemos el archivo directamente de la carpeta gracias a Git LFS
-archivo_a_leer = "Base COD.xlsx"
+# EDUCACIÓN: Ahora leemos el archivo Parquet, que es súper ligero.
+archivo_a_leer = "base_principal.parquet"
 
 try:
     timestamp_modificacion = os.path.getmtime(archivo_a_leer)
@@ -98,26 +98,17 @@ st.markdown(
     unsafe_allow_html=True)
 
 
-@st.cache_data
-def cargar_datos(ruta_archivo):
-    diccionario_hojas = pd.read_excel(ruta_archivo, sheet_name=None, engine='calamine')
+@st.cache_data(show_spinner="⚡ Descomprimiendo datos ultrarrápidos (Parquet)...")
+def cargar_datos():
+    # 1. Leer los archivos Parquet directamente a la memoria de pandas
+    df = pd.read_parquet("base_principal.parquet")
 
-    df_base_list = []
-    df_comision_list = []
+    try:
+        df_comisiones = pd.read_parquet("comisiones.parquet")
+    except FileNotFoundError:
+        df_comisiones = pd.DataFrame()
 
-    for nombre_hoja, datos_hoja in diccionario_hojas.items():
-        if 'comision' in nombre_hoja.lower() or 'comisión' in nombre_hoja.lower():
-            df_comision_list.append(datos_hoja)
-        else:
-            df_base_list.append(datos_hoja)
-
-    if len(df_base_list) > 0:
-        columnas_maestras = df_base_list[0].columns
-        for i in range(len(df_base_list)):
-            df_base_list[i] = df_base_list[i].rename(columns=dict(zip(df_base_list[i].columns, columnas_maestras)))
-
-    df = pd.concat(df_base_list, ignore_index=True)
-
+    # 2. Asignación de columnas y limpieza idéntica a tu código original
     col_orden = df.columns[0]
     col_item = df.columns[1]
     col_fecha = df.columns[2]
@@ -159,8 +150,12 @@ def cargar_datos(ruta_archivo):
     df['Deuda_Transportadora'] = df[col_obs].isin(['2. enviar a transportadora'])
     df['Es_Deuda_Total'] = df['Deuda_Transportes'] | df['Deuda_Transportadora']
 
-    if df_comision_list:
-        df_comisiones = pd.concat(df_comision_list, ignore_index=True)
+    columnas_categoria = [col_estado, col_ciudad, col_marca, col_transp, col_tipo, col_rango, 'Mes']
+    for col in columnas_categoria:
+        if col in df.columns:
+            df[col] = df[col].astype('category')
+
+    if not df_comisiones.empty:
         idx_fecha_com = col_excel('G')
         idx_monto_com = col_excel('E')
         idx_clave_com = col_excel('I')
@@ -181,6 +176,12 @@ def cargar_datos(ruta_archivo):
                 lambda row: calcular_comision(row, col_monto_com, col_clave_com, col_transp_com), axis=1
             )
             df_comisiones['Transportadora_Limpia'] = df_comisiones[col_transp_com].astype(str).str.strip().str.title()
+
+            columnas_cat_com = ['Mes', 'Transportadora_Limpia']
+            for col in columnas_cat_com:
+                if col in df_comisiones.columns:
+                    df_comisiones[col] = df_comisiones[col].astype('category')
+
             df_comisiones = df_comisiones[df_comisiones['Valor_Comision'] > 0]
 
         except IndexError:
@@ -191,13 +192,11 @@ def cargar_datos(ruta_archivo):
     return df, col_orden, col_item, col_fecha, col_guia, col_valor, col_marca, col_ciudad, col_transp, col_tipo, col_recaudo, col_rango, df_comisiones
 
 
-con_datos = st.spinner('Procesando tu archivo Excel local...')
+con_datos = st.spinner('Construyendo dashboard...')
 try:
-    df_principal, col_orden, col_item, col_fecha, col_guia, col_valor, col_marca, col_ciudad, col_transp, col_tipo, col_recaudo, col_rango, df_comisiones = cargar_datos(
-        archivo_a_leer)
+    df_principal, col_orden, col_item, col_fecha, col_guia, col_valor, col_marca, col_ciudad, col_transp, col_tipo, col_recaudo, col_rango, df_comisiones = cargar_datos()
 except Exception as e:
-    st.error(
-        f"🚨 Error: No se encontró el archivo '{archivo_a_leer}'. Asegúrate de que esté en la misma carpeta que este código.")
+    st.error(f"🚨 Error: No se encontraron los archivos Parquet. Detalle: {e}")
     st.stop()
 
 # --- 3. BARRA DE FILTROS SUPERIOR ---
@@ -293,7 +292,7 @@ col5.metric(label="Total Órdenes", value=f"{total_ordenes:,.0f}")
 col6.metric(label="Tasa Devolución", value=f"{tasa_devolucion:.1f}%")
 
 if not df_filtrado.empty:
-    df_tipo = df_filtrado[~df_filtrado['Es_Devolucion']].groupby(col_tipo)[col_valor].sum().reset_index()
+    df_tipo = df_filtrado[~df_filtrado['Es_Devolucion']].groupby(col_tipo, observed=True)[col_valor].sum().reset_index()
     if df_tipo[col_valor].sum() > 0:
         df_tipo['Porcentaje'] = (df_tipo[col_valor] / df_tipo[col_valor].sum()) * 100
         df_tipo['Texto'] = df_tipo.apply(lambda x: f"{x[col_tipo]}: {x['Porcentaje']:.1f}%", axis=1)
@@ -329,12 +328,12 @@ if transp_seleccionada != "Todas":
 
 if not df_comparativo.empty:
     df_guias_comparativo = df_comparativo.drop_duplicates(subset=[col_guia])
-    kpis_anio = df_comparativo.groupby('Año').agg(
+    kpis_anio = df_comparativo.groupby('Año', observed=True).agg(
         Total_Ordenes=(col_orden, 'nunique'),
         Total_Devoluciones=(col_valor, lambda x: x[df_comparativo.loc[x.index, 'Es_Devolucion']].sum()),
         Ventas_Totales=(col_valor, 'sum')
     )
-    recaudo_anio = df_guias_comparativo.groupby('Año')[col_recaudo].sum().rename('Total_Recaudo')
+    recaudo_anio = df_guias_comparativo.groupby('Año', observed=True)[col_recaudo].sum().rename('Total_Recaudo')
 
     df_com_comp = df_comisiones.copy()
     if not df_com_comp.empty:
@@ -344,7 +343,7 @@ if not df_comparativo.empty:
             df_com_comp = df_com_comp[df_com_comp['Año'] != anio_seleccionado]
         if transp_seleccionada != "Todas":
             df_com_comp = df_com_comp[df_com_comp['Transportadora_Limpia'] == transp_seleccionada]
-        comision_anio = df_com_comp.groupby('Año')['Valor_Comision'].sum().rename('Total_Comision')
+        comision_anio = df_com_comp.groupby('Año', observed=True)['Valor_Comision'].sum().rename('Total_Comision')
     else:
         comision_anio = pd.Series(0, index=kpis_anio.index, name='Total_Comision')
 
@@ -364,11 +363,13 @@ st.write(
     "Esta tabla cruza las Ventas Totales, el Recaudo y las Comisiones generadas mes a mes para un análisis integral.")
 
 if not df_filtrado.empty:
-    df_v = df_ventas_totales.groupby(['Año', 'Mes_Num', 'Mes'])[col_valor].sum().reset_index(name='Ventas Totales')
-    df_r = df_guias.groupby(['Año', 'Mes_Num', 'Mes'])[col_recaudo].sum().reset_index(name='Recaudo')
+    df_v = df_ventas_totales.groupby(['Año', 'Mes_Num', 'Mes'], observed=True)[col_valor].sum().reset_index(
+        name='Ventas Totales')
+    df_r = df_guias.groupby(['Año', 'Mes_Num', 'Mes'], observed=True)[col_recaudo].sum().reset_index(name='Recaudo')
 
     if not df_com_filt.empty:
-        df_c = df_com_filt.groupby(['Año', 'Mes_Num', 'Mes'])['Valor_Comision'].sum().reset_index(name='Comisión')
+        df_c = df_com_filt.groupby(['Año', 'Mes_Num', 'Mes'], observed=True)['Valor_Comision'].sum().reset_index(
+            name='Comisión')
     else:
         df_c = pd.DataFrame(columns=['Año', 'Mes_Num', 'Mes', 'Comisión'])
 
@@ -396,8 +397,9 @@ col_graf1, col_graf2 = st.columns(2)
 if not df_filtrado.empty:
     with col_graf1:
         st.markdown("<h4 style='text-align: center; font-size: 18px;'>Por Rango</h4>", unsafe_allow_html=True)
-        df_ventas_rango = df_ventas_totales.groupby(col_rango)[col_valor].sum().reset_index(name='Ventas_Totales')
-        df_recaudo_rango = df_guias.groupby(col_rango)[col_recaudo].sum().reset_index(name='Recaudo')
+        df_ventas_rango = df_ventas_totales.groupby(col_rango, observed=True)[col_valor].sum().reset_index(
+            name='Ventas_Totales')
+        df_recaudo_rango = df_guias.groupby(col_rango, observed=True)[col_recaudo].sum().reset_index(name='Recaudo')
         df_rango = pd.merge(df_ventas_rango, df_recaudo_rango, on=col_rango, how='outer').fillna(0)
         df_rango_melt = df_rango.melt(id_vars=col_rango, value_vars=['Ventas_Totales', 'Recaudo'], var_name='Métrica',
                                       value_name='Monto')
@@ -413,8 +415,9 @@ if not df_filtrado.empty:
 
     with col_graf2:
         st.markdown("<h4 style='text-align: center; font-size: 18px;'>Por Transportadora</h4>", unsafe_allow_html=True)
-        df_ventas_transp = df_ventas_totales.groupby(col_transp)[col_valor].sum().reset_index(name='Ventas_Totales')
-        df_recaudo_transp = df_guias.groupby(col_transp)[col_recaudo].sum().reset_index(name='Recaudo')
+        df_ventas_transp = df_ventas_totales.groupby(col_transp, observed=True)[col_valor].sum().reset_index(
+            name='Ventas_Totales')
+        df_recaudo_transp = df_guias.groupby(col_transp, observed=True)[col_recaudo].sum().reset_index(name='Recaudo')
         df_transp_comp = pd.merge(df_ventas_transp, df_recaudo_transp, on=col_transp, how='outer').fillna(0)
         df_transp_melt = df_transp_comp.melt(id_vars=col_transp, value_vars=['Ventas_Totales', 'Recaudo'],
                                              var_name='Métrica', value_name='Monto')
@@ -433,7 +436,7 @@ st.divider()
 
 st.subheader("📊 Gráfica: Comparativo de Ventas Totales (Año vs Año)")
 if not df_ventas_totales.empty:
-    ventas_mes = df_ventas_totales.groupby(['Mes_Num', 'Mes', 'Año'])[col_valor].sum().reset_index(
+    ventas_mes = df_ventas_totales.groupby(['Mes_Num', 'Mes', 'Año'], observed=True)[col_valor].sum().reset_index(
         name='Ventas_Totales')
     df_grafica = ventas_mes.sort_values(by=['Año', 'Mes_Num'])
     df_grafica['Año'] = df_grafica['Año'].astype(str)
@@ -450,7 +453,7 @@ st.divider()
 
 st.subheader("🔥 Matriz por Transportadora")
 if not df_filtrado.empty:
-    resumen_transp = df_filtrado.groupby(col_transp).agg(
+    resumen_transp = df_filtrado.groupby(col_transp, observed=True).agg(
         Ordenes=(col_orden, 'nunique'),
         Devoluciones=(col_valor, lambda x: x[df_filtrado.loc[x.index, 'Es_Devolucion']].sum()),
         Ventas_Totales=(col_valor, 'sum')
@@ -466,8 +469,8 @@ st.header("🏆 Tops de Desempeño (Ventas Totales)")
 col_top1, col_top2 = st.columns(2)
 with col_top1:
     st.subheader("Top 10 Ciudades")
-    df_top_ciudades = df_ventas_totales.groupby(col_ciudad)[col_valor].sum().nlargest(10).reset_index().sort_values(
-        by=col_valor, ascending=True)
+    df_top_ciudades = df_ventas_totales.groupby(col_ciudad, observed=True)[col_valor].sum().nlargest(
+        10).reset_index().sort_values(by=col_valor, ascending=True)
     df_top_ciudades['Etiqueta'] = df_top_ciudades[col_valor].apply(lambda x: formato_millones(x))
     fig_ciudades = px.bar(df_top_ciudades, x=col_valor, y=col_ciudad, orientation='h', text='Etiqueta',
                           color_discrete_sequence=[COLORES_NEUTROS[0]])
@@ -477,8 +480,8 @@ with col_top1:
 
 with col_top2:
     st.subheader("Top 10 Marcas")
-    df_top_marcas = df_ventas_totales.groupby(col_marca)[col_valor].sum().nlargest(10).reset_index().sort_values(
-        by=col_valor, ascending=True)
+    df_top_marcas = df_ventas_totales.groupby(col_marca, observed=True)[col_valor].sum().nlargest(
+        10).reset_index().sort_values(by=col_valor, ascending=True)
     df_top_marcas['Etiqueta'] = df_top_marcas[col_valor].apply(lambda x: formato_millones(x))
     fig_marcas = px.bar(df_top_marcas, x=col_valor, y=col_marca, orientation='h', text='Etiqueta',
                         color_discrete_sequence=[COLORES_NEUTROS[1]])
@@ -494,7 +497,7 @@ if not df_tiempos.empty:
     st.metric(label="Promedio Global de Recaudo (Días)", value=f"{df_tiempos['Dias_Recaudo'].mean():.1f} días")
 
     st.write("**Promedio de Días por Transportadora (General)**")
-    df_tiempos_transp = df_tiempos.groupby(col_transp)['Dias_Recaudo'].mean().reset_index().sort_values(
+    df_tiempos_transp = df_tiempos.groupby(col_transp, observed=True)['Dias_Recaudo'].mean().reset_index().sort_values(
         by='Dias_Recaudo', ascending=True)
     fig_tiempos = px.bar(df_tiempos_transp, x='Dias_Recaudo', y=col_transp, orientation='h',
                          color_discrete_sequence=[COLORES_NEUTROS[0]], text='Dias_Recaudo')
@@ -503,16 +506,16 @@ if not df_tiempos.empty:
     st.plotly_chart(fig_tiempos, width="stretch")
 
     st.write("**Tendencia de Días de Recaudo (Mes a Mes por Transportadora)**")
-    lista_transp_disponibles = sorted(df_tiempos[col_transp].unique())
+    lista_transp_disponibles = sorted(df_tiempos[col_transp].dropna().unique())
     transp_seleccionadas = st.multiselect("Filtra Transportadoras específicas para ver su tendencia:",
                                           options=lista_transp_disponibles, default=[])
 
-    df_tendencia_dias = df_tiempos.groupby(['Año', 'Mes_Num', 'Mes', col_transp])[
+    df_tendencia_dias = df_tiempos.groupby(['Año', 'Mes_Num', 'Mes', col_transp], observed=True)[
         'Dias_Recaudo'].mean().reset_index().sort_values(by=['Año', 'Mes_Num'])
     if transp_seleccionadas:
         df_tendencia_dias = df_tendencia_dias[df_tendencia_dias[col_transp].isin(transp_seleccionadas)]
 
-    df_tendencia_dias['Periodo'] = df_tendencia_dias['Mes'] + "<br>" + df_tendencia_dias['Año'].astype(str)
+    df_tendencia_dias['Periodo'] = df_tendencia_dias['Mes'].astype(str) + "<br>" + df_tendencia_dias['Año'].astype(str)
     fig_tendencia_dias = px.line(
         df_tendencia_dias, x='Periodo', y='Dias_Recaudo', color=col_transp, markers=True,
         color_discrete_sequence=COLORES_NEUTROS, hover_name=col_transp,
@@ -546,7 +549,7 @@ def mostrar_matriz_deuda(df_datos, filtro_columna):
     df_deuda = df_datos[df_datos[filtro_columna] == True]
     if not df_deuda.empty:
         matriz = df_deuda.pivot_table(index=col_transp, columns=['Año', 'Mes_Num'], values=col_valor, aggfunc='sum',
-                                      fill_value=0)
+                                      fill_value=0, observed=True)
         matriz.columns = pd.MultiIndex.from_tuples([(str(anio), MESES_ES[mes]) for anio, mes in matriz.columns],
                                                    names=["Año", "Mes"])
         matriz[('Total', 'Deuda')] = matriz.sum(axis=1)
@@ -590,7 +593,6 @@ else:
 
 st.divider()
 
-# --- 11. ANÁLISIS DE COMISIONES POR TRANSPORTADORA ---
 st.header("💸 Análisis de Comisiones por Transportadora")
 
 if not df_com_filt.empty:
@@ -599,10 +601,10 @@ if not df_com_filt.empty:
     df_com_filt_6m = pd.merge(df_com_filt, periodos, on=['Año', 'Mes_Num'], how='inner')
 
     st.subheader("📈 Tendencia de Comisiones por Mes (Últimos 6 meses)")
-    tendencia_com = df_com_filt_6m.groupby(['Año', 'Mes_Num', 'Mes', 'Transportadora_Limpia'])[
+    tendencia_com = df_com_filt_6m.groupby(['Año', 'Mes_Num', 'Mes', 'Transportadora_Limpia'], observed=True)[
         'Valor_Comision'].sum().reset_index()
     tendencia_com = tendencia_com.sort_values(by=['Año', 'Mes_Num'])
-    tendencia_com['Periodo'] = tendencia_com['Mes'] + "<br>" + tendencia_com['Año'].astype(str)
+    tendencia_com['Periodo'] = tendencia_com['Mes'].astype(str) + "<br>" + tendencia_com['Año'].astype(str)
 
     fig_com = px.line(
         tendencia_com, x='Periodo', y='Valor_Comision', color='Transportadora_Limpia', markers=True,
@@ -620,7 +622,7 @@ if not df_com_filt.empty:
 
     st.subheader("🧮 Matriz de Comisiones Mensuales (Últimos 6 meses)")
     matriz_com = df_com_filt_6m.pivot_table(index='Transportadora_Limpia', columns=['Año', 'Mes_Num'],
-                                            values='Valor_Comision', aggfunc='sum', fill_value=0)
+                                            values='Valor_Comision', aggfunc='sum', fill_value=0, observed=True)
     matriz_com.columns = pd.MultiIndex.from_tuples([(str(anio), MESES_ES[mes]) for anio, mes in matriz_com.columns],
                                                    names=["Año", "Mes"])
     matriz_com[('Total', 'Comisión')] = matriz_com.sum(axis=1)
