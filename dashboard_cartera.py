@@ -54,7 +54,6 @@ def calcular_comision(row, col_monto, col_clave, col_transp):
                     return monto * 0.0265
             else:
                 return monto * 0.02
-
         elif 'servientrega' in transp:
             return monto * 0.012
         elif 'domina' in transp:
@@ -99,7 +98,7 @@ st.markdown(
     unsafe_allow_html=True)
 
 
-@st.cache_data(show_spinner="⚡ Descomprimiendo y reduciendo uso de RAM (Downcasting)...")
+@st.cache_data(show_spinner="⚡ Descomprimiendo y optimizando concurrencia (Multiusuario)...")
 def cargar_datos():
     df = pd.read_parquet("base_principal.parquet")
 
@@ -149,19 +148,25 @@ def cargar_datos():
     df['Deuda_Transportadora'] = df[col_obs].isin(['2. enviar a transportadora'])
     df['Es_Deuda_Total'] = df['Deuda_Transportes'] | df['Deuda_Transportadora']
 
-    # --- EDUCACIÓN: OPTIMIZACIÓN EXTREMA (DOWNCASTING) ---
-    # 1. Reducimos el tamaño de todos los números en RAM de 64 bits a 32 bits
     cols_float = df.select_dtypes(include=['float64']).columns
     df[cols_float] = df[cols_float].astype('float32')
 
     cols_int = df.select_dtypes(include=['int64']).columns
     df[cols_int] = df[cols_int].astype('int32')
 
-    # 2. Comprimimos los textos que se repiten mucho (como ciudades o meses)
-    columnas_categoria = [col_estado, col_ciudad, col_marca, col_transp, col_tipo, col_rango, 'Mes']
+    columnas_categoria = [col_ciudad, col_marca, col_transp, col_tipo, col_rango, 'Mes']
     for col in columnas_categoria:
         if col in df.columns:
             df[col] = df[col].astype('category')
+
+    # --- NUEVO: DIETA DE COLUMNAS (Descartar lo que no se grafica) ---
+    columnas_utiles = [
+        col_orden, col_item, col_fecha, col_guia, col_valor, col_marca, col_ciudad,
+        col_transp, col_tipo, col_recaudo, col_rango, 'Dias_Recaudo', 'Año', 'Mes_Num',
+        'Mes', 'Es_Devolucion', 'Deuda_Transportes', 'Deuda_Transportadora', 'Es_Deuda_Total'
+    ]
+    # Reemplazamos df para que solo contenga lo estrictamente necesario
+    df = df[columnas_utiles]
 
     if not df_comisiones.empty:
         idx_fecha_com = col_excel('G')
@@ -185,7 +190,6 @@ def cargar_datos():
             )
             df_comisiones['Transportadora_Limpia'] = df_comisiones[col_transp_com].astype(str).str.strip().str.title()
 
-            # Downcasting también para la base de comisiones
             cols_float_com = df_comisiones.select_dtypes(include=['float64']).columns
             df_comisiones[cols_float_com] = df_comisiones[cols_float_com].astype('float32')
 
@@ -249,29 +253,36 @@ with col_f4:
 
 st.divider()
 
+# --- NUEVO: FILTROS MEDIANTE MÁSCARAS BOOLEANAS (Cero Fotocopias en RAM) ---
 # 3.1 Filtrado de la Base Principal
-df_filtrado = df_principal.copy()
+mask_principal = pd.Series(True, index=df_principal.index)
 if anio_seleccionado != "Todos":
-    df_filtrado = df_filtrado[df_filtrado['Año'] == anio_seleccionado]
+    mask_principal = mask_principal & (df_principal['Año'] == anio_seleccionado)
 if mes_seleccionado != "Todos":
-    df_filtrado = df_filtrado[df_filtrado['Mes'] == mes_seleccionado]
+    mask_principal = mask_principal & (df_principal['Mes'] == mes_seleccionado)
 if transp_seleccionada != "Todas":
-    df_filtrado = df_filtrado[df_filtrado[col_transp] == transp_seleccionada]
+    mask_principal = mask_principal & (df_principal[col_transp] == transp_seleccionada)
+
+df_filtrado = df_principal[mask_principal]
 
 # 3.2 Filtrado de las Comisiones
-df_com_filt = df_comisiones.copy()
-if not df_com_filt.empty:
+if not df_comisiones.empty:
+    mask_com = pd.Series(True, index=df_comisiones.index)
     if anio_seleccionado != "Todos":
-        df_com_filt = df_com_filt[df_com_filt['Año'] == anio_seleccionado]
+        mask_com = mask_com & (df_comisiones['Año'] == anio_seleccionado)
     if mes_seleccionado != "Todos":
-        df_com_filt = df_com_filt[df_com_filt['Mes'] == mes_seleccionado]
+        mask_com = mask_com & (df_comisiones['Mes'] == mes_seleccionado)
     if transp_seleccionada != "Todas":
-        df_com_filt = df_com_filt[df_com_filt['Transportadora_Limpia'] == transp_seleccionada]
+        mask_com = mask_com & (df_comisiones['Transportadora_Limpia'] == transp_seleccionada)
+    df_com_filt = df_comisiones[mask_com]
+else:
+    df_com_filt = df_comisiones
 
 # --- 4. KPIs GENERALES Y BARRA DE DISTRIBUCIÓN ---
 total_ordenes = df_filtrado[col_orden].nunique()
 total_devoluciones = df_filtrado.loc[df_filtrado['Es_Devolucion'], col_valor].sum()
-df_ventas_totales = df_filtrado.copy()
+# Ya no hacemos un .copy() adicional
+df_ventas_totales = df_filtrado
 ventas_totales = df_ventas_totales[col_valor].sum()
 df_guias = df_filtrado.drop_duplicates(subset=[col_guia])
 total_recaudo = df_guias[col_recaudo].sum()
@@ -330,13 +341,16 @@ st.divider()
 
 # --- 5. COMPARATIVO ANUAL ---
 st.subheader("📅 Desempeño Comparativo por Año")
-df_comparativo = df_principal.copy()
+# Máscara para comparativo (Cero copias)
+mask_comp = pd.Series(True, index=df_principal.index)
 if mes_seleccionado != "Todos":
-    df_comparativo = df_comparativo[df_comparativo['Mes'] == mes_seleccionado]
+    mask_comp = mask_comp & (df_principal['Mes'] == mes_seleccionado)
 if anio_seleccionado != "Todos":
-    df_comparativo = df_comparativo[df_comparativo['Año'] != anio_seleccionado]
+    mask_comp = mask_comp & (df_principal['Año'] != anio_seleccionado)
 if transp_seleccionada != "Todas":
-    df_comparativo = df_comparativo[df_comparativo[col_transp] == transp_seleccionada]
+    mask_comp = mask_comp & (df_principal[col_transp] == transp_seleccionada)
+
+df_comparativo = df_principal[mask_comp]
 
 if not df_comparativo.empty:
     df_guias_comparativo = df_comparativo.drop_duplicates(subset=[col_guia])
@@ -347,14 +361,16 @@ if not df_comparativo.empty:
     )
     recaudo_anio = df_guias_comparativo.groupby('Año', observed=True)[col_recaudo].sum().rename('Total_Recaudo')
 
-    df_com_comp = df_comisiones.copy()
-    if not df_com_comp.empty:
+    if not df_comisiones.empty:
+        mask_com_comp = pd.Series(True, index=df_comisiones.index)
         if mes_seleccionado != "Todos":
-            df_com_comp = df_com_comp[df_com_comp['Mes'] == mes_seleccionado]
+            mask_com_comp = mask_com_comp & (df_comisiones['Mes'] == mes_seleccionado)
         if anio_seleccionado != "Todos":
-            df_com_comp = df_com_comp[df_com_comp['Año'] != anio_seleccionado]
+            mask_com_comp = mask_com_comp & (df_comisiones['Año'] != anio_seleccionado)
         if transp_seleccionada != "Todas":
-            df_com_comp = df_com_comp[df_com_comp['Transportadora_Limpia'] == transp_seleccionada]
+            mask_com_comp = mask_com_comp & (df_comisiones['Transportadora_Limpia'] == transp_seleccionada)
+
+        df_com_comp = df_comisiones[mask_com_comp]
         comision_anio = df_com_comp.groupby('Año', observed=True)['Valor_Comision'].sum().rename('Total_Comision')
     else:
         comision_anio = pd.Series(0, index=kpis_anio.index, name='Total_Comision')
