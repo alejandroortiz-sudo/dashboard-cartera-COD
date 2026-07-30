@@ -19,6 +19,8 @@ ESTILO_CENTRADO = [
 
 
 def formato_millones(valor):
+    if pd.isna(valor):
+        return "$0.00"
     if abs(valor) >= 1000000:
         return f"${valor / 1000000:,.1f} M"
     else:
@@ -84,7 +86,6 @@ st.markdown(
     "<h2 style='margin-top: -25px; margin-bottom: 5px; padding-top: 0px; text-align: center; font-size: 26px;'>📊 Dashboard Integral de Gestión de Cartera COD</h2>",
     unsafe_allow_html=True)
 
-# EDUCACIÓN: Ahora leemos el archivo Parquet, que es súper ligero.
 archivo_a_leer = "base_principal.parquet"
 
 try:
@@ -98,9 +99,8 @@ st.markdown(
     unsafe_allow_html=True)
 
 
-@st.cache_data(show_spinner="⚡ Descomprimiendo datos ultrarrápidos (Parquet)...")
+@st.cache_data(show_spinner="⚡ Descomprimiendo y reduciendo uso de RAM (Downcasting)...")
 def cargar_datos():
-    # 1. Leer los archivos Parquet directamente a la memoria de pandas
     df = pd.read_parquet("base_principal.parquet")
 
     try:
@@ -108,7 +108,6 @@ def cargar_datos():
     except FileNotFoundError:
         df_comisiones = pd.DataFrame()
 
-    # 2. Asignación de columnas y limpieza idéntica a tu código original
     col_orden = df.columns[0]
     col_item = df.columns[1]
     col_fecha = df.columns[2]
@@ -150,6 +149,15 @@ def cargar_datos():
     df['Deuda_Transportadora'] = df[col_obs].isin(['2. enviar a transportadora'])
     df['Es_Deuda_Total'] = df['Deuda_Transportes'] | df['Deuda_Transportadora']
 
+    # --- EDUCACIÓN: OPTIMIZACIÓN EXTREMA (DOWNCASTING) ---
+    # 1. Reducimos el tamaño de todos los números en RAM de 64 bits a 32 bits
+    cols_float = df.select_dtypes(include=['float64']).columns
+    df[cols_float] = df[cols_float].astype('float32')
+
+    cols_int = df.select_dtypes(include=['int64']).columns
+    df[cols_int] = df[cols_int].astype('int32')
+
+    # 2. Comprimimos los textos que se repiten mucho (como ciudades o meses)
     columnas_categoria = [col_estado, col_ciudad, col_marca, col_transp, col_tipo, col_rango, 'Mes']
     for col in columnas_categoria:
         if col in df.columns:
@@ -176,6 +184,10 @@ def cargar_datos():
                 lambda row: calcular_comision(row, col_monto_com, col_clave_com, col_transp_com), axis=1
             )
             df_comisiones['Transportadora_Limpia'] = df_comisiones[col_transp_com].astype(str).str.strip().str.title()
+
+            # Downcasting también para la base de comisiones
+            cols_float_com = df_comisiones.select_dtypes(include=['float64']).columns
+            df_comisiones[cols_float_com] = df_comisiones[cols_float_com].astype('float32')
 
             columnas_cat_com = ['Mes', 'Transportadora_Limpia']
             for col in columnas_cat_com:
