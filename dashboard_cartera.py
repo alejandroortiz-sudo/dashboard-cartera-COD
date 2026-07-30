@@ -81,8 +81,12 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
+# --- NUEVO: BRANDING CORPORATIVO DAFITI ---
 st.markdown(
-    "<h2 style='margin-top: -25px; margin-bottom: 5px; padding-top: 0px; text-align: center; font-size: 26px;'>📊 Dashboard Integral de Gestión de Cartera COD</h2>",
+    "<h1 style='text-align: center; color: #000000; margin-top: -35px; font-size: 45px; font-weight: 900; letter-spacing: 2px;'>DAFITI</h1>",
+    unsafe_allow_html=True)
+st.markdown(
+    "<h2 style='margin-top: -15px; margin-bottom: 5px; text-align: center; font-size: 24px; color: #2A4B7C;'>📊 Dashboard Integral de Gestión de Cartera COD</h2>",
     unsafe_allow_html=True)
 
 archivo_a_leer = "base_principal.parquet"
@@ -251,7 +255,7 @@ with col_f4:
 
 st.divider()
 
-# Filtrado por máscaras booleanas (Cero Fotocopias en RAM)
+# Filtrado por máscaras booleanas
 mask_principal = pd.Series(True, index=df_principal.index)
 if anio_seleccionado != "Todos":
     mask_principal = mask_principal & (df_principal['Año'] == anio_seleccionado)
@@ -283,7 +287,7 @@ total_recaudo = df_guias[col_recaudo].sum()
 tasa_devolucion = (total_devoluciones / ventas_totales * 100) if ventas_totales > 0 else 0
 total_comision = df_com_filt['Valor_Comision'].sum() if not df_com_filt.empty else 0.0
 
-# --- NUEVO: IMPLEMENTACIÓN DE PESTAÑAS (TABS) ---
+# --- IMPLEMENTACIÓN DE PESTAÑAS (TABS) ---
 tab_resumen, tab_transp, tab_cartera, tab_comp = st.tabs([
     "📊 Resumen General",
     "🚚 Transportadoras",
@@ -383,6 +387,51 @@ with tab_resumen:
                                      legend_title="")
             st.plotly_chart(fig_transp, width="stretch")
 
+    st.divider()
+
+    # --- NUEVO: REUBICACIÓN DEL DESEMPEÑO COMPARATIVO (TAB 1) ---
+    st.subheader("📅 Desempeño Comparativo por Año")
+    mask_comp = pd.Series(True, index=df_principal.index)
+    if mes_seleccionado != "Todos":
+        mask_comp = mask_comp & (df_principal['Mes'] == mes_seleccionado)
+    if anio_seleccionado != "Todos":
+        mask_comp = mask_comp & (df_principal['Año'] != anio_seleccionado)
+    if transp_seleccionada != "Todas":
+        mask_comp = mask_comp & (df_principal[col_transp] == transp_seleccionada)
+
+    df_comparativo = df_principal[mask_comp]
+
+    if not df_comparativo.empty:
+        df_guias_comparativo = df_comparativo.drop_duplicates(subset=[col_guia])
+        kpis_anio = df_comparativo.groupby('Año', observed=True).agg(
+            Total_Ordenes=(col_orden, 'nunique'),
+            Total_Devoluciones=(col_valor, lambda x: x[df_comparativo.loc[x.index, 'Es_Devolucion']].sum()),
+            Ventas_Totales=(col_valor, 'sum')
+        )
+        recaudo_anio = df_guias_comparativo.groupby('Año', observed=True)[col_recaudo].sum().rename('Total_Recaudo')
+
+        if not df_comisiones.empty:
+            mask_com_comp = pd.Series(True, index=df_comisiones.index)
+            if mes_seleccionado != "Todos":
+                mask_com_comp = mask_com_comp & (df_comisiones['Mes'] == mes_seleccionado)
+            if anio_seleccionado != "Todos":
+                mask_com_comp = mask_com_comp & (df_comisiones['Año'] != anio_seleccionado)
+            if transp_seleccionada != "Todas":
+                mask_com_comp = mask_com_comp & (df_comisiones['Transportadora_Limpia'] == transp_seleccionada)
+
+            df_com_comp = df_comisiones[mask_com_comp]
+            comision_anio = df_com_comp.groupby('Año', observed=True)['Valor_Comision'].sum().rename('Total_Comision')
+        else:
+            comision_anio = pd.Series(0, index=kpis_anio.index, name='Total_Comision')
+
+        kpis_anio = kpis_anio.join(recaudo_anio).join(comision_anio).reset_index()
+        tabla_kpis_centrada = kpis_anio.style.format({
+            'Año': '{:.0f}', 'Total_Ordenes': '{:,.0f}', 'Total_Devoluciones': '${:,.2f}',
+            'Ventas_Totales': '${:,.2f}', 'Total_Recaudo': '${:,.2f}', 'Total_Comision': '${:,.2f}'
+        }).set_properties(**{'text-align': 'center'}).set_table_styles(ESTILO_CENTRADO)
+
+        st.dataframe(tabla_kpis_centrada, width="stretch", hide_index=True)
+
 # --- PESTAÑA 2: TRANSPORTADORAS ---
 with tab_transp:
     st.header("🔥 Matriz por Transportadora")
@@ -472,15 +521,25 @@ with tab_transp:
             st.subheader("🧮 Matriz Mensual")
             matriz_com = df_com_filt_6m.pivot_table(index='Transportadora_Limpia', columns=['Año', 'Mes_Num'],
                                                     values='Valor_Comision', aggfunc='sum', fill_value=0, observed=True)
-            matriz_com.columns = pd.MultiIndex.from_tuples(
-                [(str(anio), MESES_ES[mes]) for anio, mes in matriz_com.columns], names=["Año", "Mes"])
-            matriz_com[('Total', 'Comisión')] = matriz_com.sum(axis=1)
-            matriz_com = matriz_com.sort_values(by=('Total', 'Comisión'), ascending=False)
 
-            matriz_com_centrada = matriz_com.style.background_gradient(cmap=CMAP_NEUTRO,
-                                                                       subset=matriz_com.columns[:-1]).format(
-                "${:,.0f}").set_properties(**{'text-align': 'center'}).set_table_styles(ESTILO_CENTRADO)
-            st.dataframe(matriz_com_centrada, width="stretch")
+            # --- NUEVO: CORRECCIÓN VISUAL DE LA MATRIZ DE COMISIONES ---
+            # Aplanamos el título de las columnas para evitar doble fila y truncamiento
+            matriz_com.columns = [f"{MESES_ES[mes]} {anio}" for anio, mes in matriz_com.columns]
+            matriz_com['Total Comisión'] = matriz_com.sum(axis=1)
+            matriz_com = matriz_com.sort_values(by='Total Comisión', ascending=False)
+
+            # Renombramos el índice y lo convertimos a columna normal para ahorrar espacio
+            matriz_com.index.name = 'Transportadora'
+            matriz_com = matriz_com.reset_index()
+
+            # Aplicamos formato moneda a todas las columnas excepto la primera (que es texto)
+            columnas_numericas = matriz_com.columns[1:]
+            matriz_com_centrada = matriz_com.style.background_gradient(cmap=CMAP_NEUTRO, subset=columnas_numericas) \
+                .format({col: "${:,.0f}" for col in columnas_numericas}) \
+                .set_properties(**{'text-align': 'center'}) \
+                .set_table_styles(ESTILO_CENTRADO)
+
+            st.dataframe(matriz_com_centrada, width="stretch", hide_index=True)
     else:
         st.info("Los filtros seleccionados no arrojaron datos de comisiones.")
 
@@ -547,49 +606,6 @@ with tab_cartera:
 
 # --- PESTAÑA 4: COMPARATIVOS Y TOPS ---
 with tab_comp:
-    st.subheader("📅 Desempeño Comparativo por Año")
-    mask_comp = pd.Series(True, index=df_principal.index)
-    if mes_seleccionado != "Todos":
-        mask_comp = mask_comp & (df_principal['Mes'] == mes_seleccionado)
-    if anio_seleccionado != "Todos":
-        mask_comp = mask_comp & (df_principal['Año'] != anio_seleccionado)
-    if transp_seleccionada != "Todas":
-        mask_comp = mask_comp & (df_principal[col_transp] == transp_seleccionada)
-
-    df_comparativo = df_principal[mask_comp]
-
-    if not df_comparativo.empty:
-        df_guias_comparativo = df_comparativo.drop_duplicates(subset=[col_guia])
-        kpis_anio = df_comparativo.groupby('Año', observed=True).agg(
-            Total_Ordenes=(col_orden, 'nunique'),
-            Total_Devoluciones=(col_valor, lambda x: x[df_comparativo.loc[x.index, 'Es_Devolucion']].sum()),
-            Ventas_Totales=(col_valor, 'sum')
-        )
-        recaudo_anio = df_guias_comparativo.groupby('Año', observed=True)[col_recaudo].sum().rename('Total_Recaudo')
-
-        if not df_comisiones.empty:
-            mask_com_comp = pd.Series(True, index=df_comisiones.index)
-            if mes_seleccionado != "Todos":
-                mask_com_comp = mask_com_comp & (df_comisiones['Mes'] == mes_seleccionado)
-            if anio_seleccionado != "Todos":
-                mask_com_comp = mask_com_comp & (df_comisiones['Año'] != anio_seleccionado)
-            if transp_seleccionada != "Todas":
-                mask_com_comp = mask_com_comp & (df_comisiones['Transportadora_Limpia'] == transp_seleccionada)
-
-            df_com_comp = df_comisiones[mask_com_comp]
-            comision_anio = df_com_comp.groupby('Año', observed=True)['Valor_Comision'].sum().rename('Total_Comision')
-        else:
-            comision_anio = pd.Series(0, index=kpis_anio.index, name='Total_Comision')
-
-        kpis_anio = kpis_anio.join(recaudo_anio).join(comision_anio).reset_index()
-        tabla_kpis_centrada = kpis_anio.style.format({
-            'Año': '{:.0f}', 'Total_Ordenes': '{:,.0f}', 'Total_Devoluciones': '${:,.2f}',
-            'Ventas_Totales': '${:,.2f}', 'Total_Recaudo': '${:,.2f}', 'Total_Comision': '${:,.2f}'
-        }).set_properties(**{'text-align': 'center'}).set_table_styles(ESTILO_CENTRADO)
-
-        st.dataframe(tabla_kpis_centrada, width="stretch", hide_index=True)
-
-    st.divider()
     st.subheader("📑 Consolidado Financiero Mensual")
     st.write("Esta tabla cruza las Ventas Totales, el Recaudo y las Comisiones generadas mes a mes.")
 
