@@ -100,7 +100,7 @@ st.markdown(
 
 @st.cache_data
 def cargar_datos(ruta_archivo):
-    diccionario_hojas = pd.read_excel(ruta_archivo, sheet_name=None, engine='openpyxl')
+    diccionario_hojas = pd.read_excel(ruta_archivo, sheet_name=None, engine='calamine')
 
     df_base_list = []
     df_comision_list = []

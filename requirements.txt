@@ -2,5 +2,5 @@ streamlit
 pandas
 plotly
 matplotlib
-openpyxl
+python-calamine
 requests
