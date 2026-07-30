@@ -84,7 +84,7 @@ st.markdown(
     "<h2 style='margin-top: -25px; margin-bottom: 5px; padding-top: 0px; text-align: center; font-size: 26px;'>📊 Dashboard Integral de Gestión de Cartera COD</h2>",
     unsafe_allow_html=True)
 
-# EDUCACIÓN: Leemos el archivo directamente de la carpeta de tu proyecto.
+# EDUCACIÓN: Leemos el archivo directamente de la carpeta gracias a Git LFS
 archivo_a_leer = "Base COD.xlsx"
 
 try:
