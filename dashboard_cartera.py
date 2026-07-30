@@ -1,0 +1,634 @@
+import streamlit as st
+import pandas as pd
+import plotly.express as px
+from matplotlib.colors import LinearSegmentedColormap
+import os
+from datetime import datetime
+
+# --- VARIABLES GLOBALES Y COLORES NEUTROS ---
+MESES_ES = {1: 'Enero', 2: 'Febrero', 3: 'Marzo', 4: 'Abril', 5: 'Mayo', 6: 'Junio',
+            7: 'Julio', 8: 'Agosto', 9: 'Septiembre', 10: 'Octubre', 11: 'Noviembre', 12: 'Diciembre'}
+
+COLORES_NEUTROS = ['#2A4B7C', '#5072A7', '#D4A373', '#E76F51', '#5F9EA0', '#E9C46A', '#6D6875', '#8F979C']
+CMAP_NEUTRO = LinearSegmentedColormap.from_list('neutro', ['#F8F9FA', '#2A4B7C'])
+
+ESTILO_CENTRADO = [
+    {'selector': 'th', 'props': [('text-align', 'center')]},
+    {'selector': 'td', 'props': [('text-align', 'center')]}
+]
+
+
+def formato_millones(valor):
+    if abs(valor) >= 1000000:
+        return f"${valor / 1000000:,.1f} M"
+    else:
+        return f"${valor:,.2f}"
+
+
+def col_excel(letra):
+    letra = letra.upper()
+    numero = 0
+    for c in letra:
+        numero = numero * 26 + (ord(c) - 64)
+    return numero - 1
+
+
+def calcular_comision(row, col_monto, col_clave, col_transp):
+    try:
+        transp = str(row[col_transp]).strip().lower()
+        monto = float(str(row[col_monto]).replace('$', '').replace(',', '')) if pd.notna(row[col_monto]) else 0.0
+        clave = str(row[col_clave]).strip().lower()
+
+        if 'coordinadora' in transp:
+            if 'efectivo' in clave or 'pse' in clave:
+                if monto <= 229000:
+                    return 5474.0
+                else:
+                    return monto * 0.02
+            elif 'tarjeta' in clave:
+                if monto <= 136000:
+                    return 4641.0
+                else:
+                    return monto * 0.0265
+            else:
+                return monto * 0.02
+
+        elif 'servientrega' in transp:
+            return monto * 0.012
+        elif 'domina' in transp:
+            return monto * 0.018
+        elif 'xcargo' in transp or 'x cargo' in transp:
+            return monto * 0.015
+        elif 'moova' in transp:
+            return monto * 0.02
+        else:
+            return 0.0
+    except:
+        return 0.0
+
+
+st.set_page_config(page_title="Dashboard Cartera COD", layout="wide")
+
+st.markdown("""
+    <style>
+    h1, h2, h3 { text-align: center !important; }
+    [data-testid="stMetricValue"], [data-testid="stMetricLabel"] {
+        text-align: center !important;
+        justify-content: center !important;
+        display: flex;
+    }
+    </style>
+""", unsafe_allow_html=True)
+
+st.markdown(
+    "<h2 style='margin-top: -25px; margin-bottom: 5px; padding-top: 0px; text-align: center; font-size: 26px;'>📊 Dashboard Integral de Gestión de Cartera COD</h2>",
+    unsafe_allow_html=True)
+
+# EDUCACIÓN: Leemos el archivo directamente de la carpeta de tu proyecto.
+archivo_a_leer = "Base COD.xlsx"
+
+try:
+    timestamp_modificacion = os.path.getmtime(archivo_a_leer)
+    fecha_actualizacion = datetime.fromtimestamp(timestamp_modificacion).strftime('%d/%m/%Y %I:%M %p')
+except Exception:
+    fecha_actualizacion = "Desconocida"
+
+st.markdown(
+    f"<p style='text-align: center; color: gray; font-size: 14px; margin-top: -10px;'>Última actualización de datos: <b>{fecha_actualizacion}</b></p>",
+    unsafe_allow_html=True)
+
+
+@st.cache_data
+def cargar_datos(ruta_archivo):
+    diccionario_hojas = pd.read_excel(ruta_archivo, sheet_name=None, engine='openpyxl')
+
+    df_base_list = []
+    df_comision_list = []
+
+    for nombre_hoja, datos_hoja in diccionario_hojas.items():
+        if 'comision' in nombre_hoja.lower() or 'comisión' in nombre_hoja.lower():
+            df_comision_list.append(datos_hoja)
+        else:
+            df_base_list.append(datos_hoja)
+
+    if len(df_base_list) > 0:
+        columnas_maestras = df_base_list[0].columns
+        for i in range(len(df_base_list)):
+            df_base_list[i] = df_base_list[i].rename(columns=dict(zip(df_base_list[i].columns, columnas_maestras)))
+
+    df = pd.concat(df_base_list, ignore_index=True)
+
+    col_orden = df.columns[0]
+    col_item = df.columns[1]
+    col_fecha = df.columns[2]
+    col_estado = df.columns[3]
+    col_ciudad = df.columns[5]
+    col_valor = df.columns[6]
+    col_marca = df.columns[10]
+    col_guia = df.columns[16]
+    col_recaudo = df.columns[21]
+    col_transp = df.columns[23]
+    col_fecha_rec = df.columns[25]
+    col_tipo = df.columns[33]
+    col_obs = df.columns[34]
+    col_rango = df.columns[col_excel('AF')]
+
+    df[col_valor] = pd.to_numeric(df[col_valor].astype(str).str.replace(r'[\$,\s]', '', regex=True),
+                                  errors='coerce').fillna(0)
+    df[col_recaudo] = pd.to_numeric(df[col_recaudo].astype(str).str.replace(r'[\$,\s]', '', regex=True),
+                                    errors='coerce').fillna(0)
+
+    df[col_fecha] = pd.to_datetime(df[col_fecha], errors='coerce')
+    df[col_fecha_rec] = pd.to_datetime(df[col_fecha_rec], errors='coerce')
+    df['Dias_Recaudo'] = (df[col_fecha_rec] - df[col_fecha]).dt.days
+
+    df['Año'] = df[col_fecha].dt.year
+    df['Mes_Num'] = df[col_fecha].dt.month
+    df['Mes'] = df['Mes_Num'].map(MESES_ES)
+
+    df[col_estado] = df[col_estado].astype(str).str.strip().str.lower()
+    df[col_obs] = df[col_obs].astype(str).str.strip().str.lower()
+    df[col_transp] = df[col_transp].astype(str).str.strip().str.title().replace('Nan', 'Sin Asignar')
+    df[col_tipo] = df[col_tipo].fillna('Sin Asignar')
+    df[col_rango] = df[col_rango].fillna('Sin Rango')
+
+    estados_devolucion = ['canceled', 'rejected_after_delivery_failed']
+    df['Es_Devolucion'] = df[col_estado].isin(estados_devolucion)
+    df['Deuda_Transportes'] = df[col_obs].isin(
+        ['3. enviar a transportes', '7. enviar a cedi-marketplace', '4. en procesamiento'])
+    df['Deuda_Transportadora'] = df[col_obs].isin(['2. enviar a transportadora'])
+    df['Es_Deuda_Total'] = df['Deuda_Transportes'] | df['Deuda_Transportadora']
+
+    if df_comision_list:
+        df_comisiones = pd.concat(df_comision_list, ignore_index=True)
+        idx_fecha_com = col_excel('G')
+        idx_monto_com = col_excel('E')
+        idx_clave_com = col_excel('I')
+        idx_transp_com = col_excel('F')
+
+        try:
+            col_fecha_com = df_comisiones.columns[idx_fecha_com]
+            col_monto_com = df_comisiones.columns[idx_monto_com]
+            col_clave_com = df_comisiones.columns[idx_clave_com]
+            col_transp_com = df_comisiones.columns[idx_transp_com]
+
+            df_comisiones[col_fecha_com] = pd.to_datetime(df_comisiones[col_fecha_com], errors='coerce')
+            df_comisiones['Año'] = df_comisiones[col_fecha_com].dt.year
+            df_comisiones['Mes_Num'] = df_comisiones[col_fecha_com].dt.month
+            df_comisiones['Mes'] = df_comisiones['Mes_Num'].map(MESES_ES)
+
+            df_comisiones['Valor_Comision'] = df_comisiones.apply(
+                lambda row: calcular_comision(row, col_monto_com, col_clave_com, col_transp_com), axis=1
+            )
+            df_comisiones['Transportadora_Limpia'] = df_comisiones[col_transp_com].astype(str).str.strip().str.title()
+            df_comisiones = df_comisiones[df_comisiones['Valor_Comision'] > 0]
+
+        except IndexError:
+            df_comisiones = pd.DataFrame()
+    else:
+        df_comisiones = pd.DataFrame()
+
+    return df, col_orden, col_item, col_fecha, col_guia, col_valor, col_marca, col_ciudad, col_transp, col_tipo, col_recaudo, col_rango, df_comisiones
+
+
+con_datos = st.spinner('Procesando tu archivo Excel local...')
+try:
+    df_principal, col_orden, col_item, col_fecha, col_guia, col_valor, col_marca, col_ciudad, col_transp, col_tipo, col_recaudo, col_rango, df_comisiones = cargar_datos(
+        archivo_a_leer)
+except Exception as e:
+    st.error(
+        f"🚨 Error: No se encontró el archivo '{archivo_a_leer}'. Asegúrate de que esté en la misma carpeta que este código.")
+    st.stop()
+
+# --- 3. BARRA DE FILTROS SUPERIOR ---
+st.markdown(
+    "<h4 style='margin-top: 0px; margin-bottom: 10px; text-align: center; font-size: 16px;'>🔍 Filtros de Búsqueda</h4>",
+    unsafe_allow_html=True)
+
+if 'filtro_anio' not in st.session_state:
+    st.session_state['filtro_anio'] = 'Todos'
+if 'filtro_mes' not in st.session_state:
+    st.session_state['filtro_mes'] = 'Todos'
+if 'filtro_transp' not in st.session_state:
+    st.session_state['filtro_transp'] = 'Todas'
+
+
+def reset_filtros():
+    st.session_state['filtro_anio'] = 'Todos'
+    st.session_state['filtro_mes'] = 'Todos'
+    st.session_state['filtro_transp'] = 'Todas'
+
+
+lista_anios = sorted(df_principal['Año'].dropna().unique())
+df_meses_unicos = df_principal[['Mes_Num', 'Mes']].dropna().drop_duplicates().sort_values('Mes_Num')
+lista_meses = df_meses_unicos['Mes'].tolist()
+lista_transp = sorted(df_principal[col_transp].dropna().unique())
+
+col_f1, col_f2, col_f3, col_f4 = st.columns(4)
+
+with col_f1:
+    anio_seleccionado = st.selectbox("Selecciona un Año", ["Todos"] + list(lista_anios), key='filtro_anio')
+with col_f2:
+    mes_seleccionado = st.selectbox("Selecciona un Mes", ["Todos"] + lista_meses, key='filtro_mes')
+with col_f3:
+    transp_seleccionada = st.selectbox("Selecciona Transportadora", ["Todas"] + lista_transp, key='filtro_transp')
+with col_f4:
+    st.markdown("<div style='margin-top: 28px;'></div>", unsafe_allow_html=True)
+    st.button("🔄 Limpiar Filtros", on_click=reset_filtros, width="stretch")
+
+st.divider()
+
+# 3.1 Filtrado de la Base Principal
+df_filtrado = df_principal.copy()
+if anio_seleccionado != "Todos":
+    df_filtrado = df_filtrado[df_filtrado['Año'] == anio_seleccionado]
+if mes_seleccionado != "Todos":
+    df_filtrado = df_filtrado[df_filtrado['Mes'] == mes_seleccionado]
+if transp_seleccionada != "Todas":
+    df_filtrado = df_filtrado[df_filtrado[col_transp] == transp_seleccionada]
+
+# 3.2 Filtrado de las Comisiones
+df_com_filt = df_comisiones.copy()
+if not df_com_filt.empty:
+    if anio_seleccionado != "Todos":
+        df_com_filt = df_com_filt[df_com_filt['Año'] == anio_seleccionado]
+    if mes_seleccionado != "Todos":
+        df_com_filt = df_com_filt[df_com_filt['Mes'] == mes_seleccionado]
+    if transp_seleccionada != "Todas":
+        df_com_filt = df_com_filt[df_com_filt['Transportadora_Limpia'] == transp_seleccionada]
+
+# --- 4. KPIs GENERALES Y BARRA DE DISTRIBUCIÓN ---
+total_ordenes = df_filtrado[col_orden].nunique()
+total_devoluciones = df_filtrado.loc[df_filtrado['Es_Devolucion'], col_valor].sum()
+df_ventas_totales = df_filtrado.copy()
+ventas_totales = df_ventas_totales[col_valor].sum()
+df_guias = df_filtrado.drop_duplicates(subset=[col_guia])
+total_recaudo = df_guias[col_recaudo].sum()
+tasa_devolucion = (total_devoluciones / ventas_totales * 100) if ventas_totales > 0 else 0
+total_comision = df_com_filt['Valor_Comision'].sum() if not df_com_filt.empty else 0.0
+
+st.markdown("<h3 style='margin-top: -15px; margin-bottom: 0px;'>📈 Indicadores Generales</h3>", unsafe_allow_html=True)
+
+if not df_filtrado.empty and pd.notna(df_filtrado[col_fecha].min()):
+    f_min = df_filtrado[col_fecha].min().strftime('%d/%m/%Y')
+    f_max = df_filtrado[col_fecha].max().strftime('%d/%m/%Y')
+    st.markdown(
+        f"<p style='text-align: center; color: gray; font-size: 15px; margin-top: 5px; margin-bottom: 15px;'>Periodo analizado: <b>{f_min} al {f_max}</b></p>",
+        unsafe_allow_html=True)
+else:
+    st.markdown(
+        "<p style='text-align: center; color: gray; font-size: 15px; margin-top: 5px; margin-bottom: 15px;'>Periodo analizado: Sin datos</p>",
+        unsafe_allow_html=True)
+
+col1, col2, col3 = st.columns(3)
+col1.metric(label="Ventas Totales", value=formato_millones(ventas_totales))
+col2.metric(label="Total Recaudo", value=formato_millones(total_recaudo))
+col3.metric(label="Devoluciones (Valor)", value=formato_millones(total_devoluciones))
+
+st.write("")
+
+col4, col5, col6 = st.columns(3)
+col4.metric(label="Total Comisión", value=formato_millones(total_comision))
+col5.metric(label="Total Órdenes", value=f"{total_ordenes:,.0f}")
+col6.metric(label="Tasa Devolución", value=f"{tasa_devolucion:.1f}%")
+
+if not df_filtrado.empty:
+    df_tipo = df_filtrado[~df_filtrado['Es_Devolucion']].groupby(col_tipo)[col_valor].sum().reset_index()
+    if df_tipo[col_valor].sum() > 0:
+        df_tipo['Porcentaje'] = (df_tipo[col_valor] / df_tipo[col_valor].sum()) * 100
+        df_tipo['Texto'] = df_tipo.apply(lambda x: f"{x[col_tipo]}: {x['Porcentaje']:.1f}%", axis=1)
+        df_tipo['Agrupador'] = "Distribución"
+
+        fig_tipo = px.bar(
+            df_tipo, x=col_valor, y='Agrupador', color=col_tipo, orientation='h', text='Texto',
+            color_discrete_sequence=[COLORES_NEUTROS[0], COLORES_NEUTROS[2], COLORES_NEUTROS[4]]
+        )
+        fig_tipo.update_traces(textposition='inside', textfont_size=14, insidetextanchor='middle')
+        fig_tipo.update_layout(
+            barmode='stack', showlegend=False, height=90,
+            margin=dict(t=0, b=0, l=0, r=0),
+            xaxis=dict(showgrid=False, showticklabels=False, zeroline=False, title=""),
+            yaxis=dict(showgrid=False, showticklabels=False, zeroline=False, title="")
+        )
+        st.markdown(
+            "<p style='text-align: center; color: gray; font-size: 14px; margin-bottom: -5px;'>Composición de Ventas por Tipo</p>",
+            unsafe_allow_html=True)
+        st.plotly_chart(fig_tipo, width="stretch")
+
+st.divider()
+
+# --- 5. COMPARATIVO ANUAL ---
+st.subheader("📅 Desempeño Comparativo por Año")
+df_comparativo = df_principal.copy()
+if mes_seleccionado != "Todos":
+    df_comparativo = df_comparativo[df_comparativo['Mes'] == mes_seleccionado]
+if anio_seleccionado != "Todos":
+    df_comparativo = df_comparativo[df_comparativo['Año'] != anio_seleccionado]
+if transp_seleccionada != "Todas":
+    df_comparativo = df_comparativo[df_comparativo[col_transp] == transp_seleccionada]
+
+if not df_comparativo.empty:
+    df_guias_comparativo = df_comparativo.drop_duplicates(subset=[col_guia])
+    kpis_anio = df_comparativo.groupby('Año').agg(
+        Total_Ordenes=(col_orden, 'nunique'),
+        Total_Devoluciones=(col_valor, lambda x: x[df_comparativo.loc[x.index, 'Es_Devolucion']].sum()),
+        Ventas_Totales=(col_valor, 'sum')
+    )
+    recaudo_anio = df_guias_comparativo.groupby('Año')[col_recaudo].sum().rename('Total_Recaudo')
+
+    df_com_comp = df_comisiones.copy()
+    if not df_com_comp.empty:
+        if mes_seleccionado != "Todos":
+            df_com_comp = df_com_comp[df_com_comp['Mes'] == mes_seleccionado]
+        if anio_seleccionado != "Todos":
+            df_com_comp = df_com_comp[df_com_comp['Año'] != anio_seleccionado]
+        if transp_seleccionada != "Todas":
+            df_com_comp = df_com_comp[df_com_comp['Transportadora_Limpia'] == transp_seleccionada]
+        comision_anio = df_com_comp.groupby('Año')['Valor_Comision'].sum().rename('Total_Comision')
+    else:
+        comision_anio = pd.Series(0, index=kpis_anio.index, name='Total_Comision')
+
+    kpis_anio = kpis_anio.join(recaudo_anio).join(comision_anio).reset_index()
+    tabla_kpis_centrada = kpis_anio.style.format({
+        'Año': '{:.0f}', 'Total_Ordenes': '{:,.0f}', 'Total_Devoluciones': '${:,.2f}',
+        'Ventas_Totales': '${:,.2f}', 'Total_Recaudo': '${:,.2f}', 'Total_Comision': '${:,.2f}'
+    }).set_properties(**{'text-align': 'center'}).set_table_styles(ESTILO_CENTRADO)
+
+    st.dataframe(tabla_kpis_centrada, width="stretch", hide_index=True)
+
+st.divider()
+
+# --- 6. TABLA CONSOLIDADA FINANCIERA ---
+st.subheader("📑 Consolidado Financiero Mensual")
+st.write(
+    "Esta tabla cruza las Ventas Totales, el Recaudo y las Comisiones generadas mes a mes para un análisis integral.")
+
+if not df_filtrado.empty:
+    df_v = df_ventas_totales.groupby(['Año', 'Mes_Num', 'Mes'])[col_valor].sum().reset_index(name='Ventas Totales')
+    df_r = df_guias.groupby(['Año', 'Mes_Num', 'Mes'])[col_recaudo].sum().reset_index(name='Recaudo')
+
+    if not df_com_filt.empty:
+        df_c = df_com_filt.groupby(['Año', 'Mes_Num', 'Mes'])['Valor_Comision'].sum().reset_index(name='Comisión')
+    else:
+        df_c = pd.DataFrame(columns=['Año', 'Mes_Num', 'Mes', 'Comisión'])
+
+    df_consolidado = pd.merge(df_v, df_r, on=['Año', 'Mes_Num', 'Mes'], how='outer')
+    df_consolidado = pd.merge(df_consolidado, df_c, on=['Año', 'Mes_Num', 'Mes'], how='outer').fillna(0)
+    df_consolidado = df_consolidado.sort_values(by=['Año', 'Mes_Num'])
+
+    columnas_mostrar = ['Año', 'Mes', 'Ventas Totales', 'Recaudo', 'Comisión']
+    df_consolidado_mostrar = df_consolidado[columnas_mostrar]
+
+    tabla_consolidada_estilo = df_consolidado_mostrar.style.format({
+        'Ventas Totales': '${:,.0f}',
+        'Recaudo': '${:,.0f}',
+        'Comisión': '${:,.0f}'
+    }).set_properties(**{'text-align': 'center'}).set_table_styles(ESTILO_CENTRADO)
+
+    st.dataframe(tabla_consolidada_estilo, width="stretch", hide_index=True)
+
+st.divider()
+
+# --- 7. GRÁFICAS COMPARATIVAS: VENTAS VS RECAUDO ---
+st.subheader("⚖️ Comparativo de Ventas Totales vs Recaudo")
+col_graf1, col_graf2 = st.columns(2)
+
+if not df_filtrado.empty:
+    with col_graf1:
+        st.markdown("<h4 style='text-align: center; font-size: 18px;'>Por Rango</h4>", unsafe_allow_html=True)
+        df_ventas_rango = df_ventas_totales.groupby(col_rango)[col_valor].sum().reset_index(name='Ventas_Totales')
+        df_recaudo_rango = df_guias.groupby(col_rango)[col_recaudo].sum().reset_index(name='Recaudo')
+        df_rango = pd.merge(df_ventas_rango, df_recaudo_rango, on=col_rango, how='outer').fillna(0)
+        df_rango_melt = df_rango.melt(id_vars=col_rango, value_vars=['Ventas_Totales', 'Recaudo'], var_name='Métrica',
+                                      value_name='Monto')
+        df_rango_melt['Etiqueta'] = df_rango_melt['Monto'].apply(lambda x: formato_millones(x))
+
+        fig_rango = px.bar(
+            df_rango_melt, x=col_rango, y='Monto', color='Métrica', barmode='group', text='Etiqueta',
+            color_discrete_sequence=[COLORES_NEUTROS[0], COLORES_NEUTROS[2]], hover_data={'Monto': ':$,.0f'}
+        )
+        fig_rango.update_traces(textposition='outside', textfont_size=10)
+        fig_rango.update_layout(xaxis_title="Rangos", yaxis_title="Monto ($)", hovermode="x unified", legend_title="")
+        st.plotly_chart(fig_rango, width="stretch")
+
+    with col_graf2:
+        st.markdown("<h4 style='text-align: center; font-size: 18px;'>Por Transportadora</h4>", unsafe_allow_html=True)
+        df_ventas_transp = df_ventas_totales.groupby(col_transp)[col_valor].sum().reset_index(name='Ventas_Totales')
+        df_recaudo_transp = df_guias.groupby(col_transp)[col_recaudo].sum().reset_index(name='Recaudo')
+        df_transp_comp = pd.merge(df_ventas_transp, df_recaudo_transp, on=col_transp, how='outer').fillna(0)
+        df_transp_melt = df_transp_comp.melt(id_vars=col_transp, value_vars=['Ventas_Totales', 'Recaudo'],
+                                             var_name='Métrica', value_name='Monto')
+        df_transp_melt['Etiqueta'] = df_transp_melt['Monto'].apply(lambda x: formato_millones(x))
+
+        fig_transp = px.bar(
+            df_transp_melt, x=col_transp, y='Monto', color='Métrica', barmode='group', text='Etiqueta',
+            color_discrete_sequence=[COLORES_NEUTROS[0], COLORES_NEUTROS[2]], hover_data={'Monto': ':$,.0f'}
+        )
+        fig_transp.update_traces(textposition='outside', textfont_size=10)
+        fig_transp.update_layout(xaxis_title="Transportadoras", yaxis_title="Monto ($)", hovermode="x unified",
+                                 legend_title="")
+        st.plotly_chart(fig_transp, width="stretch")
+
+st.divider()
+
+st.subheader("📊 Gráfica: Comparativo de Ventas Totales (Año vs Año)")
+if not df_ventas_totales.empty:
+    ventas_mes = df_ventas_totales.groupby(['Mes_Num', 'Mes', 'Año'])[col_valor].sum().reset_index(
+        name='Ventas_Totales')
+    df_grafica = ventas_mes.sort_values(by=['Año', 'Mes_Num'])
+    df_grafica['Año'] = df_grafica['Año'].astype(str)
+
+    fig = px.line(df_grafica, x='Mes', y='Ventas_Totales', color='Año', markers=True,
+                  color_discrete_sequence=[COLORES_NEUTROS[0], COLORES_NEUTROS[3]],
+                  hover_data={'Año': False, 'Mes': False, 'Ventas_Totales': ':$,.0f'})
+
+    fig.update_xaxes(categoryorder='array', categoryarray=list(MESES_ES.values()))
+    fig.update_layout(xaxis_title="", yaxis_title="Ventas Totales", hovermode="x unified")
+    st.plotly_chart(fig, width="stretch")
+
+st.divider()
+
+st.subheader("🔥 Matriz por Transportadora")
+if not df_filtrado.empty:
+    resumen_transp = df_filtrado.groupby(col_transp).agg(
+        Ordenes=(col_orden, 'nunique'),
+        Devoluciones=(col_valor, lambda x: x[df_filtrado.loc[x.index, 'Es_Devolucion']].sum()),
+        Ventas_Totales=(col_valor, 'sum')
+    ).reset_index().sort_values(by='Ventas_Totales', ascending=False).reset_index(drop=True)
+
+    tabla_coloreada = resumen_transp.style.background_gradient(cmap=CMAP_NEUTRO, subset=['Ordenes', 'Devoluciones',
+                                                                                         'Ventas_Totales']).format({
+        'Devoluciones': '${:,.2f}', 'Ventas_Totales': '${:,.2f}'
+    }).set_properties(**{'text-align': 'center'}).set_table_styles(ESTILO_CENTRADO)
+    st.dataframe(tabla_coloreada, width="stretch", hide_index=True)
+
+st.header("🏆 Tops de Desempeño (Ventas Totales)")
+col_top1, col_top2 = st.columns(2)
+with col_top1:
+    st.subheader("Top 10 Ciudades")
+    df_top_ciudades = df_ventas_totales.groupby(col_ciudad)[col_valor].sum().nlargest(10).reset_index().sort_values(
+        by=col_valor, ascending=True)
+    df_top_ciudades['Etiqueta'] = df_top_ciudades[col_valor].apply(lambda x: formato_millones(x))
+    fig_ciudades = px.bar(df_top_ciudades, x=col_valor, y=col_ciudad, orientation='h', text='Etiqueta',
+                          color_discrete_sequence=[COLORES_NEUTROS[0]])
+    fig_ciudades.update_traces(textposition='outside')
+    fig_ciudades.update_layout(xaxis_title="Ventas Totales ($)", yaxis_title="")
+    st.plotly_chart(fig_ciudades, width="stretch")
+
+with col_top2:
+    st.subheader("Top 10 Marcas")
+    df_top_marcas = df_ventas_totales.groupby(col_marca)[col_valor].sum().nlargest(10).reset_index().sort_values(
+        by=col_valor, ascending=True)
+    df_top_marcas['Etiqueta'] = df_top_marcas[col_valor].apply(lambda x: formato_millones(x))
+    fig_marcas = px.bar(df_top_marcas, x=col_valor, y=col_marca, orientation='h', text='Etiqueta',
+                        color_discrete_sequence=[COLORES_NEUTROS[1]])
+    fig_marcas.update_traces(textposition='outside')
+    fig_marcas.update_layout(xaxis_title="Ventas Totales ($)", yaxis_title="")
+    st.plotly_chart(fig_marcas, width="stretch")
+
+st.divider()
+
+st.header("⏱️ Análisis de Días de Recaudo")
+df_tiempos = df_filtrado[df_filtrado['Dias_Recaudo'] >= 0]
+if not df_tiempos.empty:
+    st.metric(label="Promedio Global de Recaudo (Días)", value=f"{df_tiempos['Dias_Recaudo'].mean():.1f} días")
+
+    st.write("**Promedio de Días por Transportadora (General)**")
+    df_tiempos_transp = df_tiempos.groupby(col_transp)['Dias_Recaudo'].mean().reset_index().sort_values(
+        by='Dias_Recaudo', ascending=True)
+    fig_tiempos = px.bar(df_tiempos_transp, x='Dias_Recaudo', y=col_transp, orientation='h',
+                         color_discrete_sequence=[COLORES_NEUTROS[0]], text='Dias_Recaudo')
+    fig_tiempos.update_traces(texttemplate='%{text:.1f}', textposition='outside')
+    fig_tiempos.update_layout(xaxis_title="Días Promedio", yaxis_title="")
+    st.plotly_chart(fig_tiempos, width="stretch")
+
+    st.write("**Tendencia de Días de Recaudo (Mes a Mes por Transportadora)**")
+    lista_transp_disponibles = sorted(df_tiempos[col_transp].unique())
+    transp_seleccionadas = st.multiselect("Filtra Transportadoras específicas para ver su tendencia:",
+                                          options=lista_transp_disponibles, default=[])
+
+    df_tendencia_dias = df_tiempos.groupby(['Año', 'Mes_Num', 'Mes', col_transp])[
+        'Dias_Recaudo'].mean().reset_index().sort_values(by=['Año', 'Mes_Num'])
+    if transp_seleccionadas:
+        df_tendencia_dias = df_tendencia_dias[df_tendencia_dias[col_transp].isin(transp_seleccionadas)]
+
+    df_tendencia_dias['Periodo'] = df_tendencia_dias['Mes'] + "<br>" + df_tendencia_dias['Año'].astype(str)
+    fig_tendencia_dias = px.line(
+        df_tendencia_dias, x='Periodo', y='Dias_Recaudo', color=col_transp, markers=True,
+        color_discrete_sequence=COLORES_NEUTROS, hover_name=col_transp,
+        hover_data={'Año': False, 'Mes': False, 'Periodo': False, col_transp: False, 'Dias_Recaudo': ':.1f'}
+    )
+    orden_periodos = df_tendencia_dias[['Año', 'Mes_Num', 'Periodo']].drop_duplicates().sort_values(['Año', 'Mes_Num'])[
+        'Periodo'].tolist()
+    fig_tendencia_dias.update_xaxes(type='category', categoryorder='array', categoryarray=orden_periodos)
+    fig_tendencia_dias.update_layout(xaxis_title="", yaxis_title="Días Promedio", hovermode="x unified")
+    st.plotly_chart(fig_tendencia_dias, width="stretch")
+
+st.divider()
+
+st.header("⚠️ Cartera Pendiente COD")
+
+deuda_transportadora = df_filtrado.loc[df_filtrado['Deuda_Transportadora'], col_valor].sum()
+deuda_transportes = df_filtrado.loc[df_filtrado['Deuda_Transportes'], col_valor].sum()
+deuda_total = deuda_transportadora + deuda_transportes
+
+col_d1, col_d2, col_d3 = st.columns(3)
+col_d1.metric("Total Transportadora", value=formato_millones(deuda_transportadora))
+col_d2.metric("Total Transportes", value=formato_millones(deuda_transportes))
+col_d3.metric("Gran Total Pendiente", value=formato_millones(deuda_total))
+
+st.write("")
+
+tab1, tab2 = st.tabs(["Transportadora", "Área Transportes (Interno)"])
+
+
+def mostrar_matriz_deuda(df_datos, filtro_columna):
+    df_deuda = df_datos[df_datos[filtro_columna] == True]
+    if not df_deuda.empty:
+        matriz = df_deuda.pivot_table(index=col_transp, columns=['Año', 'Mes_Num'], values=col_valor, aggfunc='sum',
+                                      fill_value=0)
+        matriz.columns = pd.MultiIndex.from_tuples([(str(anio), MESES_ES[mes]) for anio, mes in matriz.columns],
+                                                   names=["Año", "Mes"])
+        matriz[('Total', 'Deuda')] = matriz.sum(axis=1)
+        matriz = matriz.sort_values(by=('Total', 'Deuda'), ascending=False)
+        matriz_centrada = matriz.style.background_gradient(cmap=CMAP_NEUTRO, subset=matriz.columns[:-1]).format(
+            "${:,.2f}").set_properties(**{'text-align': 'center'}).set_table_styles(ESTILO_CENTRADO)
+        st.dataframe(matriz_centrada, width="stretch")
+    else:
+        st.success("No hay dinero pendiente en esta categoría.")
+
+
+with tab1:
+    st.subheader("Pendiente por la Transportadora")
+    mostrar_matriz_deuda(df_filtrado, 'Deuda_Transportadora')
+with tab2:
+    st.subheader("Pendiente por Transportes")
+    mostrar_matriz_deuda(df_filtrado, 'Deuda_Transportes')
+
+st.divider()
+
+st.header("📋 Detalle de Guías Pendientes de Pago")
+df_detalle_deuda = df_filtrado[df_filtrado['Es_Deuda_Total'] == True]
+
+if not df_detalle_deuda.empty:
+    columnas_solicitadas = [col_orden, col_item, col_fecha, col_guia, col_valor, col_marca, col_ciudad, col_transp,
+                            col_tipo]
+    tabla_final_pendientes = df_detalle_deuda[columnas_solicitadas].copy()
+    tabla_final_pendientes[col_guia] = tabla_final_pendientes[col_guia].astype(str)
+    tabla_final_pendientes[col_orden] = tabla_final_pendientes[col_orden].astype(str)
+    tabla_final_pendientes[col_item] = tabla_final_pendientes[col_item].astype(str)
+    tabla_final_pendientes[col_fecha] = tabla_final_pendientes[col_fecha].dt.strftime('%Y-%m-%d')
+    tabla_final_centrada = tabla_final_pendientes.style.set_properties(**{'text-align': 'center'}).set_table_styles(
+        ESTILO_CENTRADO)
+    st.dataframe(tabla_final_centrada, width="stretch", hide_index=True)
+
+    csv_detalle = tabla_final_pendientes.to_csv(index=False).encode('utf-8')
+    st.download_button(label="📥 Descargar Detalle", data=csv_detalle, file_name="Detalle_Guias_Pendientes.csv",
+                       mime="text/csv")
+else:
+    st.success("No existen guías pendientes de pago en el periodo seleccionado.")
+
+st.divider()
+
+# --- 11. ANÁLISIS DE COMISIONES POR TRANSPORTADORA ---
+st.header("💸 Análisis de Comisiones por Transportadora")
+
+if not df_com_filt.empty:
+    periodos = df_com_filt[['Año', 'Mes_Num']].drop_duplicates().sort_values(by=['Año', 'Mes_Num'],
+                                                                             ascending=False).head(6)
+    df_com_filt_6m = pd.merge(df_com_filt, periodos, on=['Año', 'Mes_Num'], how='inner')
+
+    st.subheader("📈 Tendencia de Comisiones por Mes (Últimos 6 meses)")
+    tendencia_com = df_com_filt_6m.groupby(['Año', 'Mes_Num', 'Mes', 'Transportadora_Limpia'])[
+        'Valor_Comision'].sum().reset_index()
+    tendencia_com = tendencia_com.sort_values(by=['Año', 'Mes_Num'])
+    tendencia_com['Periodo'] = tendencia_com['Mes'] + "<br>" + tendencia_com['Año'].astype(str)
+
+    fig_com = px.line(
+        tendencia_com, x='Periodo', y='Valor_Comision', color='Transportadora_Limpia', markers=True,
+        color_discrete_sequence=COLORES_NEUTROS,
+        hover_data={'Año': False, 'Mes': False, 'Periodo': False, 'Valor_Comision': ':$,.0f'}
+    )
+    orden_periodos_com = tendencia_com[['Año', 'Mes_Num', 'Periodo']].drop_duplicates().sort_values(['Año', 'Mes_Num'])[
+        'Periodo'].tolist()
+
+    fig_com.update_xaxes(type='category', categoryorder='array', categoryarray=orden_periodos_com, tickangle=-45)
+    fig_com.update_layout(xaxis_title="", yaxis_title="Comisión ($)", hovermode="x unified")
+    st.plotly_chart(fig_com, width="stretch")
+
+    st.divider()
+
+    st.subheader("🧮 Matriz de Comisiones Mensuales (Últimos 6 meses)")
+    matriz_com = df_com_filt_6m.pivot_table(index='Transportadora_Limpia', columns=['Año', 'Mes_Num'],
+                                            values='Valor_Comision', aggfunc='sum', fill_value=0)
+    matriz_com.columns = pd.MultiIndex.from_tuples([(str(anio), MESES_ES[mes]) for anio, mes in matriz_com.columns],
+                                                   names=["Año", "Mes"])
+    matriz_com[('Total', 'Comisión')] = matriz_com.sum(axis=1)
+    matriz_com = matriz_com.sort_values(by=('Total', 'Comisión'), ascending=False)
+
+    matriz_com_centrada = matriz_com.style.background_gradient(cmap=CMAP_NEUTRO, subset=matriz_com.columns[:-1]).format(
+        "${:,.0f}").set_properties(**{'text-align': 'center'}).set_table_styles(ESTILO_CENTRADO)
+    st.dataframe(matriz_com_centrada, width="stretch")
+
+else:
+    st.info("Los filtros seleccionados no arrojaron datos de comisiones.")
