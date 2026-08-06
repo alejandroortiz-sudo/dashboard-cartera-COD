@@ -4,6 +4,7 @@ import plotly.express as px
 from matplotlib.colors import LinearSegmentedColormap
 import os
 from datetime import datetime
+import pytz  # <-- NUEVA LÍNEA: Importamos la librería de zonas horarias
 
 # --- VARIABLES GLOBALES Y COLORES NEUTROS ---
 MESES_ES = {1: 'Enero', 2: 'Febrero', 3: 'Marzo', 4: 'Abril', 5: 'Mayo', 6: 'Junio',
@@ -104,12 +105,25 @@ st.markdown(
 
 @st.cache_data(show_spinner="⚡ Descomprimiendo y optimizando concurrencia (Multiusuario)...")
 def cargar_datos():
-    df = pd.read_parquet("base_principal.parquet")
+    archivo_a_leer = "base_principal.parquet"
 
     try:
-        df_comisiones = pd.read_parquet("comisiones.parquet")
-    except FileNotFoundError:
-        df_comisiones = pd.DataFrame()
+        timestamp_modificacion = os.path.getmtime(archivo_a_leer)
+
+        # NUEVO: Configuramos la zona horaria a la de Colombia
+        zona_colombia = pytz.timezone('America/Bogota')
+
+        # Le decimos a Python que aplique esta zona al momento de convertir la fecha
+        fecha_colombia = datetime.fromtimestamp(timestamp_modificacion, tz=zona_colombia)
+
+        # Formateamos para mostrarla en pantalla
+        fecha_actualizacion = fecha_colombia.strftime('%d/%m/%Y %I:%M %p')
+    except Exception:
+        fecha_actualizacion = "Desconocida"
+
+    st.markdown(
+        f"<p style='text-align: center; color: gray; font-size: 14px; margin-top: -10px;'>Última actualización de datos: <b>{fecha_actualizacion}</b></p>",
+        unsafe_allow_html=True)
 
     col_orden = df.columns[0]
     col_item = df.columns[1]
