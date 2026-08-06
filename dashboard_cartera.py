@@ -4,7 +4,7 @@ import plotly.express as px
 from matplotlib.colors import LinearSegmentedColormap
 import os
 from datetime import datetime
-import pytz  # <-- NUEVA LÍNEA: Importamos la librería de zonas horarias
+import pytz
 
 # --- VARIABLES GLOBALES Y COLORES NEUTROS ---
 MESES_ES = {1: 'Enero', 2: 'Febrero', 3: 'Marzo', 4: 'Abril', 5: 'Mayo', 6: 'Junio',
@@ -94,7 +94,9 @@ archivo_a_leer = "base_principal.parquet"
 
 try:
     timestamp_modificacion = os.path.getmtime(archivo_a_leer)
-    fecha_actualizacion = datetime.fromtimestamp(timestamp_modificacion).strftime('%d/%m/%Y %I:%M %p')
+    zona_colombia = pytz.timezone('America/Bogota')
+    fecha_colombia = datetime.fromtimestamp(timestamp_modificacion, tz=zona_colombia)
+    fecha_actualizacion = fecha_colombia.strftime('%d/%m/%Y %I:%M %p')
 except Exception:
     fecha_actualizacion = "Desconocida"
 
@@ -105,25 +107,16 @@ st.markdown(
 
 @st.cache_data(show_spinner="⚡ Descomprimiendo y optimizando concurrencia (Multiusuario)...")
 def cargar_datos():
-    archivo_a_leer = "base_principal.parquet"
+    # Comprobación de seguridad para evitar errores de variable vacía
+    if not os.path.exists("base_principal.parquet"):
+        raise FileNotFoundError("El archivo base_principal.parquet no se encontró en el servidor.")
+
+    df = pd.read_parquet("base_principal.parquet")
 
     try:
-        timestamp_modificacion = os.path.getmtime(archivo_a_leer)
-
-        # NUEVO: Configuramos la zona horaria a la de Colombia
-        zona_colombia = pytz.timezone('America/Bogota')
-
-        # Le decimos a Python que aplique esta zona al momento de convertir la fecha
-        fecha_colombia = datetime.fromtimestamp(timestamp_modificacion, tz=zona_colombia)
-
-        # Formateamos para mostrarla en pantalla
-        fecha_actualizacion = fecha_colombia.strftime('%d/%m/%Y %I:%M %p')
-    except Exception:
-        fecha_actualizacion = "Desconocida"
-
-    st.markdown(
-        f"<p style='text-align: center; color: gray; font-size: 14px; margin-top: -10px;'>Última actualización de datos: <b>{fecha_actualizacion}</b></p>",
-        unsafe_allow_html=True)
+        df_comisiones = pd.read_parquet("comisiones.parquet")
+    except FileNotFoundError:
+        df_comisiones = pd.DataFrame()
 
     col_orden = df.columns[0]
     col_item = df.columns[1]
@@ -335,7 +328,6 @@ with tab_resumen:
 
     st.divider()
 
-    # --- AJUSTE 1: DESEMPEÑO COMPARATIVO MOVIDO AQUÍ ---
     st.subheader("📅 Desempeño Comparativo por Año")
     mask_comp = pd.Series(True, index=df_principal.index)
     if mes_seleccionado != "Todos":
@@ -511,7 +503,6 @@ with tab_transp:
                                                                                  ascending=False).head(6)
         df_com_filt_6m = pd.merge(df_com_filt, periodos, on=['Año', 'Mes_Num'], how='inner')
 
-        # --- AJUSTE 2: ELIMINACIÓN DE COLUMNAS PARA APILAR GRÁFICA Y TABLA ---
         st.subheader("📉 Tendencia (Últimos 6 meses)")
         tendencia_com = df_com_filt_6m.groupby(['Año', 'Mes_Num', 'Mes', 'Transportadora_Limpia'], observed=True)[
             'Valor_Comision'].sum().reset_index()
