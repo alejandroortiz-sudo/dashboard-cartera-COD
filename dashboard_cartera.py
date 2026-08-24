@@ -90,6 +90,30 @@ st.markdown(
     "<h2 style='margin-top: -15px; margin-bottom: 5px; text-align: center; font-size: 24px; color: #2A4B7C;'>📊 Dashboard Integral de Gestión de Cartera COD</h2>",
     unsafe_allow_html=True)
 
+# --- NUEVO: PANTALLA DE INICIO AMIGABLE (SESSION STATE) ---
+# 1. Verificamos si la variable 'app_iniciada' existe en la memoria de este usuario.
+if 'app_iniciada' not in st.session_state:
+    st.session_state['app_iniciada'] = False  # Si no existe, es su primera vez hoy. Le damos valor Falso.
+
+# 2. Si la aplicación aún no ha sido iniciada por el usuario, mostramos el botón.
+if not st.session_state['app_iniciada']:
+    st.markdown("<br><br>", unsafe_allow_html=True)
+    st.info(
+        "👋 ¡Hola! El servidor está listo. Por favor, presiona el botón para cargar la base de datos y comenzar a analizar la información.")
+
+    # Colocamos el botón centrado usando columnas
+    col_vacia1, col_boton, col_vacia2 = st.columns([1, 2, 1])
+    with col_boton:
+        if st.button("🚀 Cargar Dashboard de Cartera", use_container_width=True):
+            st.session_state['app_iniciada'] = True  # Cambiamos el estado a Verdadero
+            st.rerun()  # Reiniciamos la página rápidamente para que lea el estado nuevo
+
+    # La instrucción st.stop() detiene el código aquí mismo.
+    # Así evitamos leer los archivos Parquet hasta que el usuario haga clic.
+    st.stop()
+
+# --- A PARTIR DE AQUÍ EL CÓDIGO SE EJECUTA SOLO SI PRESIONARON EL BOTÓN ---
+
 archivo_a_leer = "base_principal.parquet"
 
 try:
@@ -105,9 +129,8 @@ st.markdown(
     unsafe_allow_html=True)
 
 
-@st.cache_data(show_spinner="⚡ Descomprimiendo y optimizando concurrencia (Multiusuario)...")
+@st.cache_data(show_spinner="⚡ Descomprimiendo y construyendo visualizaciones...")
 def cargar_datos():
-    # Comprobación de seguridad para evitar errores de variable vacía
     if not os.path.exists("base_principal.parquet"):
         raise FileNotFoundError("El archivo base_principal.parquet no se encontró en el servidor.")
 
@@ -217,7 +240,6 @@ def cargar_datos():
     return df, col_orden, col_item, col_fecha, col_guia, col_valor, col_marca, col_ciudad, col_transp, col_tipo, col_recaudo, col_rango, df_comisiones
 
 
-con_datos = st.spinner('Construyendo dashboard...')
 try:
     df_principal, col_orden, col_item, col_fecha, col_guia, col_valor, col_marca, col_ciudad, col_transp, col_tipo, col_recaudo, col_rango, df_comisiones = cargar_datos()
 except Exception as e:
@@ -305,17 +327,6 @@ tab_resumen, tab_transp, tab_cartera, tab_comp = st.tabs([
 # --- PESTAÑA 1: RESUMEN GENERAL ---
 with tab_resumen:
     st.markdown("<h3 style='margin-top: 0px; margin-bottom: 0px;'>📈 Indicadores Generales</h3>", unsafe_allow_html=True)
-    if not df_filtrado.empty and pd.notna(df_filtrado[col_fecha].min()):
-        f_min = df_filtrado[col_fecha].min().strftime('%d/%m/%Y')
-        f_max = df_filtrado[col_fecha].max().strftime('%d/%m/%Y')
-        st.markdown(
-            f"<p style='text-align: center; color: gray; font-size: 15px; margin-top: 5px; margin-bottom: 15px;'>Periodo analizado: <b>{f_min} al {f_max}</b></p>",
-            unsafe_allow_html=True)
-    else:
-        st.markdown(
-            "<p style='text-align: center; color: gray; font-size: 15px; margin-top: 5px; margin-bottom: 15px;'>Periodo analizado: Sin datos</p>",
-            unsafe_allow_html=True)
-
     col1, col2, col3 = st.columns(3)
     col1.metric(label="Ventas Totales", value=formato_millones(ventas_totales))
     col2.metric(label="Total Recaudo", value=formato_millones(total_recaudo))
@@ -372,7 +383,6 @@ with tab_resumen:
 
     st.divider()
 
-    # --- COMPOSICIÓN DE VENTAS POR TIPO ---
     if not df_filtrado.empty:
         df_tipo = df_filtrado[~df_filtrado['Es_Devolucion']].groupby(col_tipo, observed=True)[
             col_valor].sum().reset_index()
@@ -523,22 +533,19 @@ with tab_transp:
                               legend_title="Transportadora")
         st.plotly_chart(fig_com, width="stretch")
 
-        st.write("")  # Espacio en blanco para separar
+        st.write("")
 
         st.subheader("🧮 Matriz Mensual")
         matriz_com = df_com_filt_6m.pivot_table(index='Transportadora_Limpia', columns=['Año', 'Mes_Num'],
                                                 values='Valor_Comision', aggfunc='sum', fill_value=0, observed=True)
 
-        # Aplanamos el título de las columnas para evitar doble fila y truncamiento
         matriz_com.columns = [f"{MESES_ES[mes]} {anio}" for anio, mes in matriz_com.columns]
         matriz_com['Total Comisión'] = matriz_com.sum(axis=1)
         matriz_com = matriz_com.sort_values(by='Total Comisión', ascending=False)
 
-        # Renombramos el índice y lo convertimos a columna normal para ahorrar espacio
         matriz_com.index.name = 'Transportadora'
         matriz_com = matriz_com.reset_index()
 
-        # Aplicamos formato moneda a todas las columnas excepto la primera (que es texto)
         columnas_numericas = matriz_com.columns[1:]
         matriz_com_centrada = matriz_com.style.background_gradient(cmap=CMAP_NEUTRO, subset=columnas_numericas) \
             .format({col: "${:,.0f}" for col in columnas_numericas}) \
