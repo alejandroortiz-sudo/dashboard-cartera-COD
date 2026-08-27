@@ -5,7 +5,7 @@ echo =========================================
 
 echo.
 echo 1. Convirtiendo el archivo Excel a Parquet...
-python convertidor.py
+.venv\Scripts\python.exe convertidor.py
 
 echo.
 echo 2. Empaquetando datos nuevos...
