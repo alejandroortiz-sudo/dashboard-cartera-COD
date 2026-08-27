@@ -24,14 +24,14 @@ df_principal = pd.concat(df_base_list, ignore_index=True)
 print("3. Estandarizando datos y guardando en formato Parquet...")
 # Homologamos los nombres de las columnas a texto
 df_principal.columns = df_principal.columns.astype(str)
-# NUEVO: Homologamos TODO el contenido de la tabla a texto para evitar errores de pyarrow
+# Homologamos TODO el contenido de la tabla a texto para evitar errores de pyarrow
 df_principal = df_principal.astype(str)
 df_principal.to_parquet("base_principal.parquet", index=False)
 
 if df_comision_list:
     df_comisiones = pd.concat(df_comision_list, ignore_index=True)
     df_comisiones.columns = df_comisiones.columns.astype(str)
-    # NUEVO: Homologamos también el contenido de comisiones a texto
+    # Homologamos también el contenido de comisiones a texto
     df_comisiones = df_comisiones.astype(str)
     df_comisiones.to_parquet("comisiones.parquet", index=False)
     print("4. Hojas de comisiones guardadas exitosamente.")

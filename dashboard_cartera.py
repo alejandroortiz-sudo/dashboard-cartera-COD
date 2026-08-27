@@ -90,30 +90,24 @@ st.markdown(
     "<h2 style='margin-top: -15px; margin-bottom: 5px; text-align: center; font-size: 24px; color: #2A4B7C;'>📊 Dashboard Integral de Gestión de Cartera COD</h2>",
     unsafe_allow_html=True)
 
-# --- NUEVO: PANTALLA DE INICIO AMIGABLE (SESSION STATE) ---
-# 1. Verificamos si la variable 'app_iniciada' existe en la memoria de este usuario.
+# --- PANTALLA DE INICIO AMIGABLE (SESSION STATE) ---
 if 'app_iniciada' not in st.session_state:
-    st.session_state['app_iniciada'] = False  # Si no existe, es su primera vez hoy. Le damos valor Falso.
+    st.session_state['app_iniciada'] = False
 
-# 2. Si la aplicación aún no ha sido iniciada por el usuario, mostramos el botón.
 if not st.session_state['app_iniciada']:
     st.markdown("<br><br>", unsafe_allow_html=True)
     st.info(
         "👋 ¡Hola! El servidor está listo. Por favor, presiona el botón para cargar la base de datos y comenzar a analizar la información.")
 
-    # Colocamos el botón centrado usando columnas
     col_vacia1, col_boton, col_vacia2 = st.columns([1, 2, 1])
     with col_boton:
         if st.button("🚀 Cargar Dashboard de Cartera", use_container_width=True):
-            st.session_state['app_iniciada'] = True  # Cambiamos el estado a Verdadero
-            st.rerun()  # Reiniciamos la página rápidamente para que lea el estado nuevo
+            st.session_state['app_iniciada'] = True
+            st.rerun()
 
-    # La instrucción st.stop() detiene el código aquí mismo.
-    # Así evitamos leer los archivos Parquet hasta que el usuario haga clic.
     st.stop()
 
-# --- A PARTIR DE AQUÍ EL CÓDIGO SE EJECUTA SOLO SI PRESIONARON EL BOTÓN ---
-
+# --- LECTURA DE FECHA Y ACTUALIZACIÓN ---
 archivo_a_leer = "base_principal.parquet"
 
 try:
@@ -122,6 +116,7 @@ try:
     fecha_colombia = datetime.fromtimestamp(timestamp_modificacion, tz=zona_colombia)
     fecha_actualizacion = fecha_colombia.strftime('%d/%m/%Y %I:%M %p')
 except Exception:
+    timestamp_modificacion = 0
     fecha_actualizacion = "Desconocida"
 
 st.markdown(
@@ -130,7 +125,7 @@ st.markdown(
 
 
 @st.cache_data(show_spinner="⚡ Descomprimiendo y construyendo visualizaciones...")
-def cargar_datos():
+def cargar_datos(timestamp_cache):
     if not os.path.exists("base_principal.parquet"):
         raise FileNotFoundError("El archivo base_principal.parquet no se encontró en el servidor.")
 
@@ -241,7 +236,8 @@ def cargar_datos():
 
 
 try:
-    df_principal, col_orden, col_item, col_fecha, col_guia, col_valor, col_marca, col_ciudad, col_transp, col_tipo, col_recaudo, col_rango, df_comisiones = cargar_datos()
+    df_principal, col_orden, col_item, col_fecha, col_guia, col_valor, col_marca, col_ciudad, col_transp, col_tipo, col_recaudo, col_rango, df_comisiones = cargar_datos(
+        timestamp_modificacion)
 except Exception as e:
     st.error(f"🚨 Error: No se encontraron los archivos Parquet. Detalle: {e}")
     st.stop()
@@ -327,6 +323,17 @@ tab_resumen, tab_transp, tab_cartera, tab_comp = st.tabs([
 # --- PESTAÑA 1: RESUMEN GENERAL ---
 with tab_resumen:
     st.markdown("<h3 style='margin-top: 0px; margin-bottom: 0px;'>📈 Indicadores Generales</h3>", unsafe_allow_html=True)
+    if not df_filtrado.empty and pd.notna(df_filtrado[col_fecha].min()):
+        f_min = df_filtrado[col_fecha].min().strftime('%d/%m/%Y')
+        f_max = df_filtrado[col_fecha].max().strftime('%d/%m/%Y')
+        st.markdown(
+            f"<p style='text-align: center; color: gray; font-size: 15px; margin-top: 5px; margin-bottom: 15px;'>Periodo analizado: <b>{f_min} al {f_max}</b></p>",
+            unsafe_allow_html=True)
+    else:
+        st.markdown(
+            "<p style='text-align: center; color: gray; font-size: 15px; margin-top: 5px; margin-bottom: 15px;'>Periodo analizado: Sin datos</p>",
+            unsafe_allow_html=True)
+
     col1, col2, col3 = st.columns(3)
     col1.metric(label="Ventas Totales", value=formato_millones(ventas_totales))
     col2.metric(label="Total Recaudo", value=formato_millones(total_recaudo))
