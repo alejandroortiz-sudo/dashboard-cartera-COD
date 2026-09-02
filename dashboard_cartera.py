@@ -277,7 +277,10 @@ lista_meses = df_meses_unicos['Mes'].tolist()
 
 # --- FILTRO DE LIMPIEZA PARA EL MENÚ DESPLEGABLE ---
 transportadoras_crudas = df_principal[col_transp].dropna().unique()
-palabras_basura = ['n/a', '_', 'canceled', 'closed', 'clarify', 'return']
+
+# Aquí expandimos las palabras basura para atrapar todos los errores
+palabras_basura = ['n/a', '_', 'canceled', 'closed', 'clarify', 'return', 'cruce', 'factura', 'fve', '&',
+                   'transferencia']
 
 lista_transp_limpia = [
     t for t in transportadoras_crudas
