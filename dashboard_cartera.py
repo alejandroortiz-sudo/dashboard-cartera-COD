@@ -274,7 +274,16 @@ def reset_filtros():
 lista_anios = sorted(df_principal['Año'].dropna().unique())
 df_meses_unicos = df_principal[['Mes_Num', 'Mes']].dropna().drop_duplicates().sort_values('Mes_Num')
 lista_meses = df_meses_unicos['Mes'].tolist()
-lista_transp = sorted(df_principal[col_transp].dropna().unique())
+
+# --- FILTRO DE LIMPIEZA PARA EL MENÚ DESPLEGABLE ---
+transportadoras_crudas = df_principal[col_transp].dropna().unique()
+palabras_basura = ['n/a', '_', 'canceled', 'closed', 'clarify', 'return']
+
+lista_transp_limpia = [
+    t for t in transportadoras_crudas
+    if not any(basura in str(t).lower() for basura in palabras_basura)
+]
+lista_transp = sorted(lista_transp_limpia)
 
 col_f1, col_f2, col_f3, col_f4 = st.columns(4)
 
