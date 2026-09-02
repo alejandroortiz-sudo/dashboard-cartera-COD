@@ -71,14 +71,24 @@ def calcular_comision(row, col_monto, col_clave, col_transp):
 
 st.set_page_config(page_title="Dashboard Cartera COD", layout="wide")
 
+# --- ESTILOS CSS Y OCULTAMIENTO DE MARCAS DE AGUA ---
 st.markdown("""
     <style>
+    /* Centrado de textos y métricas */
     h1, h2, h3 { text-align: center !important; }
     [data-testid="stMetricValue"], [data-testid="stMetricLabel"] {
         text-align: center !important;
         justify-content: center !important;
         display: flex;
     }
+
+    /* TRUCO CSS: Ocultar publicidad de Streamlit */
+    footer {visibility: hidden;} 
+    .viewerBadge_container {display: none !important;} 
+    #MainMenu {visibility: visible;} 
+
+    /* Ocultar el botón de 'Deploy' de la parte superior derecha */
+    .stDeployButton {display: none !important;} 
     </style>
 """, unsafe_allow_html=True)
 
