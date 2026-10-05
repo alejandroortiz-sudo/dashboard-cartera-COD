@@ -248,15 +248,6 @@ def cargar_datos(timestamp_cache):
 try:
     df_principal, col_orden, col_item, col_fecha, col_guia, col_valor, col_marca, col_ciudad, col_transp, col_tipo, col_recaudo, col_rango, df_comisiones = cargar_datos(
         timestamp_modificacion)
-
-    # --- NUEVO: FILTRO GLOBAL DE LIMPIEZA ---
-    # Esto elimina las filas basura desde la raíz para que las gráficas no se aplasten
-    palabras_basura = ['n/a', '_', 'canceled', 'closed', 'clarify', 'return', 'cruce', 'factura', 'fve', '&',
-                       'transferencia']
-    mask_validos = ~df_principal[col_transp].astype(str).str.lower().apply(
-        lambda x: any(b in str(x) for b in palabras_basura))
-    df_principal = df_principal[mask_validos]
-
 except Exception as e:
     st.error(f"🚨 Error: No se encontraron los archivos Parquet. Detalle: {e}")
     st.stop()
@@ -283,7 +274,19 @@ def reset_filtros():
 lista_anios = sorted(df_principal['Año'].dropna().unique())
 df_meses_unicos = df_principal[['Mes_Num', 'Mes']].dropna().drop_duplicates().sort_values('Mes_Num')
 lista_meses = df_meses_unicos['Mes'].tolist()
-lista_transp = sorted(df_principal[col_transp].dropna().unique())
+
+# --- FILTRO DE LIMPIEZA PARA EL MENÚ DESPLEGABLE ---
+transportadoras_crudas = df_principal[col_transp].dropna().unique()
+
+# Aquí expandimos las palabras basura para atrapar todos los errores
+palabras_basura = ['n/a', '_', 'canceled', 'closed', 'clarify', 'return', 'cruce', 'factura', 'fve', '&',
+                   'transferencia']
+
+lista_transp_limpia = [
+    t for t in transportadoras_crudas
+    if not any(basura in str(t).lower() for basura in palabras_basura)
+]
+lista_transp = sorted(lista_transp_limpia)
 
 col_f1, col_f2, col_f3, col_f4 = st.columns(4)
 
